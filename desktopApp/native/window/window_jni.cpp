@@ -585,9 +585,12 @@ bool start_client_locked(IMMDevice* device) {
 #define AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY 0x08000000
 #endif
     const DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
-    // 200 ms keeps network/decoder jitter away from the device without making controls sluggish.
+    // 500 ms: 200 ms was outlasted now and then by the audio thread being held up (Automix's
+    // analysis, a music video starting, a garbage collection), heard as a short dropout. Pause and
+    // seek still act at once (the stream is stopped or flushed); only a volume change, which is
+    // applied to the samples, can take up to this long to be heard.
     status = g_audio_client->Initialize(
-        AUDCLNT_SHAREMODE_SHARED, flags, 2'000'000, 0, &format, nullptr);
+        AUDCLNT_SHAREMODE_SHARED, flags, 5'000'000, 0, &format, nullptr);
     if (FAILED(status)) {
         set_audio_error(L"Starting WASAPI shared mode", status);
         release_client_locked();

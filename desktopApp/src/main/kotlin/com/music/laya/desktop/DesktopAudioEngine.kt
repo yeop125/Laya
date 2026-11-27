@@ -1009,6 +1009,7 @@ class DesktopPlaybackEngine(
      */
     private fun play(track: Track, samples: FloatArray, count: Int, skippedFrames: Long = 0L) {
         val rate = sink.format.sampleRate
+        noteOutputDry(rate)
         if (rate > 0) {
             val deck = deckRate(track)
             playhead.change(
@@ -1022,6 +1023,24 @@ class DesktopPlaybackEngine(
         sink.write(samples, count)
         framesWritten += count / sink.format.channels.coerceAtLeast(1)
         if (count > 0 && _state.value.awaitingAudio) _state.update { it.copy(awaitingAudio = false) }
+    }
+
+    /** [framesWritten] when the output last started from empty (opened, flushed, reopened). */
+    private var framesAtOutputStart = 0L
+    private var outputDryLoggedAt = 0L
+
+    /**
+     * Logs when the device has already played everything written: the audio thread was late and
+     * what is heard is a gap. Not logged in the first half second after the output starts from
+     * empty, when that is expected. At most once a second.
+     */
+    private fun noteOutputDry(rate: Int) {
+        if (rate <= 0 || framesWritten - framesAtOutputStart < rate / 2) return
+        if (framesWritten - sink.framesPlayed() > 0) return
+        val now = System.currentTimeMillis()
+        if (now - outputDryLoggedAt < 1_000) return
+        outputDryLoggedAt = now
+        DesktopTrackLog.log("output ran dry: the device had played everything written (the audio thread was late)")
     }
 
     /** The beatmatch stretch [track] is actually rendered at — [DesktopTempoBuffer]'s clamp included. */
@@ -1532,6 +1551,7 @@ class DesktopPlaybackEngine(
                     blendActive = false
                     sink.flush()
                     framesWritten = sink.framesPlayed()
+                    framesAtOutputStart = framesWritten
                     endBlend()
                 }
             }
@@ -1607,6 +1627,7 @@ class DesktopPlaybackEngine(
         }
         sink.flush()
         framesWritten = sink.framesPlayed()
+        framesAtOutputStart = framesWritten
         activePlan = null
         transitionEcho = null
         transitionBeatRepeat = null
@@ -1677,6 +1698,7 @@ class DesktopPlaybackEngine(
         }
         sink.gain = volume
         framesWritten = sink.framesPlayed()
+        framesAtOutputStart = framesWritten
         speedProcessor = DesktopAudioSpeed(sink.format.channels, sink.format.sampleRate)
         spatial = DesktopSpatialAudio(sink.format.channels, sink.format.sampleRate)
         spatialIncoming = DesktopSpatialAudio(sink.format.channels, sink.format.sampleRate)
@@ -1703,6 +1725,7 @@ class DesktopPlaybackEngine(
             .onSuccess {
                 sink.gain = volume
                 framesWritten = sink.framesPlayed()
+                framesAtOutputStart = framesWritten
                 buildChain()
                 // A reopened line counts frames from zero again, so the clock has to be rebased
                 // onto wherever the track had got to.
@@ -1764,6 +1787,7 @@ class DesktopPlaybackEngine(
         track.dropTempo()
         sink.flush()
         framesWritten = sink.framesPlayed()
+        framesAtOutputStart = framesWritten
         speedProcessor?.reset()
         spatial?.reset()
         spatialIncoming?.reset()

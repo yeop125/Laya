@@ -241,6 +241,69 @@ internal object DesktopWireGuard {
         av_dict_set(options, "http_proxy", "http://$LOOPBACK:$target", 0)
     }
 
+    /**
+     * Opens [url] in a Chromium-based browser whose traffic goes through the tunnel, or returns
+     * null when WireGuard is not running (the caller then uses the default browser).
+     *
+     * For checks that must be solved from the same address Laya uses, such as Tidal's Cloudflare
+     * verification, which otherwise fails with "Network changed during verification". It is a
+     * separate browser instance with its own profile (the user's normal profile, extensions and
+     * sign-ins are untouched), started with `--proxy-server` pointing at the local listener.
+     * Chromium keeps loopback direct by default, so Laya's own 127.0.0.1 page still loads.
+     */
+    fun openThroughTunnel(url: String): Result<Unit>? {
+        val listening = port ?: return null
+        return runCatching {
+            val browser = tunnelBrowser() ?: throw IOException(
+                "WireGuard is on, so verification has to run through it: install Vivaldi, Chrome, Brave or Edge, or turn WireGuard off to verify",
+            )
+            val profile = File(DesktopAnalysisRuntime.analysisHome().parentFile, "wireguard/browser-profile").apply { mkdirs() }
+            ProcessBuilder(
+                browser.absolutePath,
+                "--user-data-dir=${profile.absolutePath}",
+                "--proxy-server=http://$LOOPBACK:$listening",
+                // WebRTC may otherwise reveal the real address over UDP, outside the proxy.
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--new-window",
+                url,
+            ).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+            DesktopTrackLog.log("WireGuard/I: verification opened in ${browser.name} through the tunnel")
+        }
+    }
+
+    /** A Chromium-based browser, Vivaldi first (the listener's own), then Chrome, Brave, Edge. */
+    private fun tunnelBrowser(): File? {
+        val candidates = when {
+            DesktopPlatform.isWindows -> {
+                val local = System.getenv("LOCALAPPDATA").orEmpty()
+                val programs = listOf(System.getenv("ProgramFiles"), System.getenv("ProgramFiles(x86)"))
+                    .filterNotNull().filter(String::isNotBlank)
+                val roots = listOf(local).filter(String::isNotBlank) + programs
+                listOf(
+                    "Vivaldi\\Application\\vivaldi.exe",
+                    "Google\\Chrome\\Application\\chrome.exe",
+                    "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+                    "Microsoft\\Edge\\Application\\msedge.exe",
+                ).flatMap { relative -> roots.map { File(it, relative) } }
+            }
+            DesktopPlatform.isMac -> listOf(
+                "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            ).map(::File)
+            else -> listOf("vivaldi", "vivaldi-stable", "google-chrome", "chromium", "chromium-browser", "brave-browser", "microsoft-edge")
+                .flatMap { name ->
+                    System.getenv("PATH").orEmpty().split(File.pathSeparator).filter(String::isNotBlank).map { File(it, name) }
+                }
+        }
+        return candidates.firstOrNull { it.isFile }
+    }
+
     /** Proxy for JVM stacks other than the shared client. Loopback stays direct. */
     private class LoopbackProxySelector(private val listening: Int) : ProxySelector() {
         private val http = listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, listening)))

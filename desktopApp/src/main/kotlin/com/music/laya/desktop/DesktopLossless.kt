@@ -137,7 +137,10 @@ internal object DesktopLossless {
             // A callback the gateway won't accept leaves the page on its postMessage path.
             challenge = provider.session.verificationUrl("$origin/session-grant")
             if (challenge.isEmpty()) return
-            DesktopExternalLinks.open("$origin/?t=$token").getOrThrow()
+            // With WireGuard on, the check has to come from the tunnel's address too, or the
+            // gateway sees the network change between issuing and solving it and refuses.
+            (DesktopWireGuard.openThroughTunnel("$origin/?t=$token") ?: DesktopExternalLinks.open("$origin/?t=$token"))
+                .getOrThrow()
             DesktopTrackLog.log("${provider.label}: verification opened in the browser; waiting for it to finish")
             val received = withTimeout(VERIFY_TIMEOUT_MS) { grant.await() }
             provider.session.completeGrant(received)

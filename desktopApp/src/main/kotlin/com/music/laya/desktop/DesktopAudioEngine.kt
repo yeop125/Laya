@@ -421,13 +421,23 @@ class DesktopPlaybackEngine(
                     // Resolving and opening the better rendition can take a few seconds. Hand it
                     // over at the live playhead rather than jumping back to the position at which
                     // the upgrade was first offered.
-                    if (kotlin.math.abs(latest.positionMs - positionMs) >= UPGRADE_RESEEK_THRESHOLD_MS) {
-                        track.decoder.seek(latest.positionMs * 1_000)
-                        track.startUs = latest.positionMs * 1_000
+                    // While playing, the new rendition is started a little ahead of the playhead and
+                    // the swap waits for the playhead to reach it (see [pendingSwap]): whatever the
+                    // network's pace (it may come through the WireGuard tunnel), the audio is then
+                    // already decoded when it is needed. Starting it at the playhead itself left
+                    // the crossfade a few hundred ms short on a connection only a little faster than
+                    // real time, heard as a gap.
+                    val durationMs = (track.decoder.durationUs ?: 0L) / 1_000
+                    val aheadMs = latest.positionMs + SWAP_LEAD_MS
+                    val leadOk = latest.isPlaying && (durationMs <= 0 || aheadMs < durationMs - SWAP_LEAD_MS)
+                    val startMs = if (leadOk) aheadMs else latest.positionMs
+                    if (leadOk || kotlin.math.abs(latest.positionMs - positionMs) >= UPGRADE_RESEEK_THRESHOLD_MS) {
+                        track.decoder.seek(startMs * 1_000)
+                        track.startUs = startMs * 1_000
                         track.seekKaraoke(track.startUs)
                     }
                     // Hand it over only once it has audio decoded ahead, so the crossfade never
-                    // waits on the network (the rendition may come through the WireGuard tunnel).
+                    // waits on the network.
                     val format = track.decoder.outputFormat
                     val prebuffer = format.sampleRate * format.channels.coerceAtLeast(1) * SWAP_PREBUFFER_SECONDS
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -852,6 +862,9 @@ class DesktopPlaybackEngine(
      * the output's current rate, so the device is neither flushed nor reopened. Audio thread only.
      */
     private var swapOutgoing: Track? = null
+
+    /** A swap waiting for the playhead to reach the point its rendition was opened at. */
+    private var pendingSwap: Track? = null
     private var swapTotal = 0
     private var swapRemaining = 0
     private var swapBuffer = FloatArray(0)
@@ -945,6 +958,18 @@ class DesktopPlaybackEngine(
             return
         }
         sink.resume()
+
+        pendingSwap?.let { waiting ->
+            if (playhead.peek(framesWritten) >= waiting.startUs) {
+                pendingSwap = null
+                if (fadeRemaining > 0 || displaySwitched || track.tempo != null || swapOutgoing != null) {
+                    waiting.decoder.close()
+                } else {
+                    beginSwap(track, waiting)
+                    return
+                }
+            }
+        }
 
         val block = readCurrent(track)
         val count = currentReadCount
@@ -1153,6 +1178,8 @@ class DesktopPlaybackEngine(
     }
 
     private fun dropSwap() {
+        pendingSwap?.decoder?.close()
+        pendingSwap = null
         swapOutgoing?.decoder?.close()
         swapOutgoing = null
         swapRemaining = 0
@@ -1558,6 +1585,45 @@ class DesktopPlaybackEngine(
         if (playing != null && playing !== track && playWhenReady && !paused && sink.isOpen &&
             playing.tempo == null && track.tempo == null && swapOutgoing == null
         ) {
+            // Opened ahead of the playhead: wait for the audio written to reach it.
+            if (playhead.peek(framesWritten) < track.startUs) {
+                pendingSwap?.decoder?.close()
+                pendingSwap = track
+                DesktopTrackLog.log(
+                    "'${track.song.title}': ${track.stream.format.summary.ifBlank { "the new rendition" }} is ready; " +
+                        "swapping at ${track.startUs / 1_000}ms",
+                )
+                return
+            }
+            beginSwap(playing, track)
+            return
+        }
+        // Paused since it was opened ahead of the playhead: bring it back to where playback is.
+        val heardUs = playhead.peek(sink.framesPlayed())
+        if (track.startUs - heardUs > UPGRADE_RESEEK_THRESHOLD_MS * 1_000) {
+            track.decoder.seek(heardUs)
+            track.startUs = heardUs
+            track.seekKaraoke(heardUs)
+        }
+        sink.flush()
+        framesWritten = sink.framesPlayed()
+        activePlan = null
+        transitionEcho = null
+        transitionBeatRepeat = null
+        transitionReverb = null
+        transitionTexture = null
+        beatRepeatActive = false
+        beatRepeatLatched = false
+        reverbActive = false
+        textureActive = false
+        outgoingFilter.open()
+        incomingFilter.open()
+        startTrack(track, playWhenReady)
+    }
+
+    /** Fades [track] in over [playing] from where the audio handed to the device ends. */
+    private fun beginSwap(playing: Track, track: Track) {
+        run {
             // Where the audio already handed to the device ends: the new rendition picks up there.
             val endUs = playhead.peek(framesWritten)
             // Line the new rendition up by dropping what it decoded before that point, not by a
@@ -1580,22 +1646,7 @@ class DesktopPlaybackEngine(
                 "crossfading '${track.song.title}' onto ${track.stream.format.summary.ifBlank { "the new rendition" }}" +
                     " over ${SWAP_FADE_MS}ms, keeping the output at ${sink.format.sampleRate} Hz",
             )
-            return
         }
-        sink.flush()
-        framesWritten = sink.framesPlayed()
-        activePlan = null
-        transitionEcho = null
-        transitionBeatRepeat = null
-        transitionReverb = null
-        transitionTexture = null
-        beatRepeatActive = false
-        beatRepeatLatched = false
-        reverbActive = false
-        textureActive = false
-        outgoingFilter.open()
-        incomingFilter.open()
-        startTrack(track, playWhenReady)
     }
 
     private fun startTrack(track: Track, playWhenReady: Boolean) {
@@ -2203,7 +2254,10 @@ class DesktopPlaybackEngine(
         private const val SWAP_FADE_MS = 400L
 
         /** Decoded ahead before a mid-song swap is handed to the audio thread. */
-        private const val SWAP_PREBUFFER_SECONDS = 3
+        private const val SWAP_PREBUFFER_SECONDS = 1
+
+        /** How far ahead of the playhead a mid-song swap opens the new rendition. */
+        private const val SWAP_LEAD_MS = 4_000L
 
         /** How long a swap waits for that before going ahead anyway. */
         private const val SWAP_PREBUFFER_TIMEOUT_MS = 15_000L

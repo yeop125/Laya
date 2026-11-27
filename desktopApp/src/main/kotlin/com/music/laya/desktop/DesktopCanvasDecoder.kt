@@ -119,6 +119,8 @@ internal class DesktopCanvasDecoder(
     fun open(url: String, headers: Map<String, String> = emptyMap()): Result<Unit> = runCatching {
         DesktopAudioDecoder.ensureNetworkReady()
         val options = AVDictionary(null)
+        // FFmpeg's own network code would bypass the app's WireGuard route otherwise.
+        DesktopWireGuard.applyToFfmpeg(options)
         if (headers.isNotEmpty()) {
             av_dict_set(
                 options,

@@ -37,6 +37,13 @@ jobs:
 
     - uses: gradle/actions/setup-gradle@v4
 
+    # The app-local WireGuard engine (WireGuard/, Go) is built into the jar as laya_wg.exe.
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: WireGuard/go.mod
+        cache-dependency-path: WireGuard/go.sum
+
     # jpackage builds the .exe installer with WiX 3.
     - name: WiX Toolset 3
       shell: pwsh
@@ -73,6 +80,7 @@ jobs:
         jar tf "$jar" | grep -q 'models/.*\.onnx'
         jar tf "$jar" | grep -q 'native/laya_smtc.dll'
         jar tf "$jar" | grep -q 'native/laya_speech.dll'
+        jar tf "$jar" | grep -q 'native/laya_wg.exe'
 
     - name: Name the installer
       shell: pwsh

@@ -35,6 +35,9 @@ type Engine struct {
 	user  []byte
 	pass  []byte
 	port  int
+	// openLocal: the loopback listener asks for no credentials (desktop
+	// sidecar only; see EngineOptions.OpenLocal).
+	openLocal bool
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -65,6 +68,12 @@ type EngineOptions struct {
 	// Resolve resolves a hostname Endpoint. It is the one lookup that cannot go
 	// through the tunnel, because it is needed to reach the tunnel.
 	Resolve func(ctx context.Context, host string) ([]netip.Addr, error)
+	// OpenLocal makes the 127.0.0.1 listener accept clients without a login.
+	// Only the desktop sidecar sets it: a desktop JVM has HTTP stacks (the
+	// JavaFX WebView among them) that cannot answer a proxy login, and a
+	// per-user loopback listener there is no wider than an ordinary system
+	// WireGuard tunnel. The iOS bridge never sets it.
+	OpenLocal bool
 }
 
 var (
@@ -82,7 +91,7 @@ func defaultResolve(ctx context.Context, host string) ([]netip.Addr, error) {
 }
 
 func StartEngine(p *Profile, user, pass string, opt EngineOptions) (*Engine, error) {
-	if len(user) == 0 || len(pass) == 0 || len(user) > 255 || len(pass) > 255 {
+	if !opt.OpenLocal && (len(user) == 0 || len(pass) == 0 || len(user) > 255 || len(pass) > 255) {
 		return nil, errCredentials
 	}
 	endpoint, local, err := resolveEndpoint(p, opt.Resolve)
@@ -111,7 +120,7 @@ func StartEngine(p *Profile, user, pass string, opt EngineOptions) (*Engine, err
 		}
 	}
 	e := &Engine{
-		dev: dev, stack: stack, user: []byte(user), pass: []byte(pass),
+		dev: dev, stack: stack, user: []byte(user), pass: []byte(pass), openLocal: opt.OpenLocal,
 		listener: listener, clients: map[net.Conn]struct{}{},
 		dialTimeout: opt.DialTimeout, started: time.Now(), endpointResolvedLocally: local,
 	}
@@ -339,13 +348,23 @@ func (e *Engine) serveSOCKS(c net.Conn, r *bufio.Reader) {
 	if _, err := io.ReadFull(r, methods); err != nil {
 		return
 	}
-	userPass := false
+	userPass, noAuth := false, false
 	for _, m := range methods {
 		if m == 2 {
 			userPass = true
 		}
+		if m == 0 {
+			noAuth = true
+		}
 	}
-	if !userPass { // "no authentication" is never accepted
+	if e.openLocal && noAuth && !userPass {
+		if _, err := c.Write([]byte{5, 0}); err != nil {
+			return
+		}
+		e.serveSOCKSRequest(c, r)
+		return
+	}
+	if !userPass { // "no authentication" is never accepted (unless openLocal)
 		e.authRejected.Add(1)
 		c.Write([]byte{5, 0xff})
 		return
@@ -375,6 +394,11 @@ func (e *Engine) serveSOCKS(c net.Conn, r *bufio.Reader) {
 	if _, err := c.Write([]byte{1, 0}); err != nil {
 		return
 	}
+	e.serveSOCKSRequest(c, r)
+}
+
+func (e *Engine) serveSOCKSRequest(c net.Conn, r *bufio.Reader) {
+	head := make([]byte, 2)
 	req := make([]byte, 4)
 	if _, err := io.ReadFull(r, req); err != nil || req[0] != 5 {
 		return
@@ -485,7 +509,7 @@ func (e *Engine) serveCONNECT(c net.Conn, r *bufio.Reader) {
 			authorized = true
 		}
 	}
-	if !authorized {
+	if !authorized && !e.openLocal {
 		e.authRejected.Add(1)
 		io.WriteString(c, proxyAuthRequired)
 		return

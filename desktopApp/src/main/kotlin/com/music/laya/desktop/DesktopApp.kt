@@ -132,6 +132,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowForward
@@ -6431,6 +6432,7 @@ private fun DesktopSettingsScreen(
     onOpenLicenses: () -> Unit,
 ) {
     var editingSource by remember { mutableStateOf<DesktopSourceConfig?>(null) }
+    var wireGuardOpen by remember { mutableStateOf(false) }
     val tidalVerified by DesktopLossless.provider(DesktopSourceKind.TIDAL).session.verified.collectAsState()
     val qobuzVerified by DesktopLossless.provider(DesktopSourceKind.QOBUZ).session.verified.collectAsState()
     val losslessVerified = mapOf(DesktopSourceKind.TIDAL to tidalVerified, DesktopSourceKind.QOBUZ to qobuzVerified)
@@ -7246,6 +7248,18 @@ private fun DesktopSettingsScreen(
             }
             if (section == DesktopSettingsSection.ADVANCED) item {
                 SettingsGroup(DesktopStrings["advanced_options", "Advanced options"]) {
+                    val wireGuard by DesktopWireGuard.status.collectAsState()
+                    SettingsRow(
+                        Icons.Rounded.VpnKey,
+                        "WireGuard",
+                        DesktopStrings["d_wg_row_subtitle", "Route Laya's traffic through your WireGuard server"],
+                        status = when (wireGuard.state) {
+                            DesktopWireGuard.State.RUNNING -> DesktopStrings["d_wg_row_on", "Connected"] to Color(0xFF34C759)
+                            DesktopWireGuard.State.FAILED -> DesktopStrings["d_wg_row_failed", "Could not start — network blocked"] to Color(0xFFFF9F0A)
+                            DesktopWireGuard.State.OFF -> null
+                        },
+                        onClick = { wireGuardOpen = true },
+                    )
                     SettingsToggle(
                         DesktopStrings["show_nerd_stats", "Show stats for nerds"],
                         DesktopStrings["show_nerd_stats_subtitle", "Codec, bitrate and sample rate on the player"],
@@ -7261,6 +7275,10 @@ private fun DesktopSettingsScreen(
         }
         }
             }
+    }
+
+    if (wireGuardOpen) {
+        DesktopWireGuardDialog(onDismiss = { wireGuardOpen = false })
     }
 
     editingSource?.let { config ->

@@ -487,8 +487,60 @@ val prepareVosk by tasks.registering {
     }
 }
 
+/**
+ * The app-local WireGuard engine (../WireGuard, the Go code the iOS build links in) as a small
+ * executable the desktop launches at startup — see DesktopWireGuard.kt. Pure Go with cgo off, so
+ * it cross-compiles for any target from any host. Without Go on PATH the build goes on and the
+ * WireGuard setting reports that this build has no engine.
+ */
+val wireGuardNativeDir = layout.buildDirectory.dir("native-wireguard/$targetOs")
+
+/** Go's binary on PATH. Not [findOnPath]: `go --version` is no Go command, so its probe fails. */
+fun goBinary(): File? = System.getenv("PATH").orEmpty()
+    .split(File.pathSeparator)
+    .filter(String::isNotBlank)
+    .flatMap { listOf(File(it, "go"), File(it, "go.exe")) }
+    .firstOrNull { it.isFile && (hostIsWindows || it.canExecute()) }
+
+val buildWireGuardEngine by tasks.registering {
+    val outputDir = wireGuardNativeDir.get().asFile
+    val source = rootProject.file("WireGuard")
+    inputs.dir(source)
+    inputs.property("target", targetOs)
+    inputs.property("arm64", isArm64)
+    outputs.dir(outputDir)
+    onlyIf {
+        (goBinary() != null).also {
+            if (!it) logger.warn("Go is not on PATH — this build will have no WireGuard engine.")
+        }
+    }
+    doLast {
+        outputDir.mkdirs()
+        val goos = when (targetOs) {
+            "windows" -> "windows"
+            "macos" -> "darwin"
+            else -> "linux"
+        }
+        val name = if (targetOs == "windows") "laya_wg.exe" else "laya_wg"
+        providers.exec {
+            workingDir = source
+            commandLine(
+                goBinary()!!.absolutePath, "build", "-trimpath", "-buildvcs=false",
+                "-ldflags=-s -w -buildid=", "-o", File(outputDir, name).absolutePath, ".",
+            )
+            environment("GOOS", goos)
+            environment("GOARCH", if (isArm64) "arm64" else "amd64")
+            environment("CGO_ENABLED", "0")
+        }.result.get().assertNormalExitValue()
+    }
+}
+
 tasks.named<ProcessResources>("processResources") {
-    dependsOn(buildAnalysisNative, buildWindowNative, buildSpeechNative, prepareVosk)
+    dependsOn(buildAnalysisNative, buildWindowNative, buildSpeechNative, prepareVosk, buildWireGuardEngine)
+    from(wireGuardNativeDir) {
+        include("laya_wg", "laya_wg.exe")
+        into("native")
+    }
     from(speechNativeDir) {
         include("*.dylib", "laya_speech.dll")
         into("native")

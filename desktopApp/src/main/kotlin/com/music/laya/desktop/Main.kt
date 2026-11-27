@@ -29,6 +29,9 @@ import okio.Path.Companion.toOkioPath
 import org.jetbrains.compose.resources.painterResource
 
 fun main() {
+    // First of all: WireGuard, when on, has to be routing before any network client or WebView
+    // exists, or they would be created going direct.
+    DesktopWireGuard.startAtLaunch()
     // Before any WebView exists, so the sign-in window can start over with an empty jar.
     DesktopWebCookies.install()
     DesktopLossless.install()

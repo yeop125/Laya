@@ -141,6 +141,8 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         ensureNetwork()
 
         val options = AVDictionary(null)
+        // FFmpeg's own network code would bypass the app's WireGuard route otherwise.
+        DesktopWireGuard.applyToFfmpeg(options)
         if (headers.isNotEmpty()) {
             // FFmpeg wants one blob with CRLF between fields, not a dictionary.
             val block = headers.entries.joinToString("") { (name, value) -> "$name: $value\r\n" }

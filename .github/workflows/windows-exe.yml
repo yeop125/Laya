@@ -89,6 +89,8 @@ jobs:
         jar tf "$jar" | grep -q 'native/laya_smtc.dll'
         jar tf "$jar" | grep -q 'native/laya_speech.dll'
         jar tf "$jar" | grep -q 'native/laya_wg.exe'
+        # Tidal/Qobuz verification needs com.sun.net.httpserver in the bundled runtime.
+        grep -q 'jdk.httpserver' desktopApp/build/compose/binaries/main/app/Laya/runtime/release
 
     - name: Name the installer
       shell: pwsh

@@ -66,5 +66,6 @@ internal enum class DesktopSettingsPage {
     LYRICS_SOURCES,
     TRANSLATION_LANGUAGE,
     INTEGRATIONS,
+    WIREGUARD,
     LICENSES,
 }

@@ -746,6 +746,8 @@ compose.desktop {
                 "java.sql",
                 "java.xml",
                 "jdk.crypto.ec",
+                // Tidal/Qobuz verification serves its one-shot captcha page on loopback (DesktopLossless.verify).
+                "jdk.httpserver",
                 "jdk.dynalink",
                 // JavaFX WebEngine returns JavaScript objects through netscape.javascript.JSObject.
                 // Without this module the slim production runtime crashes in twkExecuteScript,

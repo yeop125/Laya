@@ -4413,6 +4413,7 @@ fun LayaDesktopApp() {
                                         }
                                     },
                                     onOpenIntegrations = { overlays.settingsPage = DesktopSettingsPage.INTEGRATIONS },
+                                    onOpenWireGuard = { overlays.settingsPage = DesktopSettingsPage.WIREGUARD },
                                     onOpenLicenses = { overlays.settingsPage = DesktopSettingsPage.LICENSES },
                                 )
                                 DesktopSettingsPage.EQUALIZER -> DesktopEqualizerDialog(onDismiss = ::goBack)
@@ -4457,6 +4458,7 @@ fun LayaDesktopApp() {
                                     onOpenDiscordToken = { overlays.discordToken = true },
                                     onDismiss = ::goBack,
                                 )
+                                DesktopSettingsPage.WIREGUARD -> DesktopWireGuardDialog(onDismiss = ::goBack)
                                 DesktopSettingsPage.LICENSES -> DesktopLicensesPage(onDismiss = ::goBack)
                             }
                             }
@@ -6429,10 +6431,10 @@ private fun DesktopSettingsScreen(
     onMoveSource: (DesktopSourceConfig, Int) -> Unit,
     onTestSource: (DesktopSourceConfig) -> Unit,
     onOpenIntegrations: () -> Unit,
+    onOpenWireGuard: () -> Unit,
     onOpenLicenses: () -> Unit,
 ) {
     var editingSource by remember { mutableStateOf<DesktopSourceConfig?>(null) }
-    var wireGuardOpen by remember { mutableStateOf(false) }
     val tidalVerified by DesktopLossless.provider(DesktopSourceKind.TIDAL).session.verified.collectAsState()
     val qobuzVerified by DesktopLossless.provider(DesktopSourceKind.QOBUZ).session.verified.collectAsState()
     val losslessVerified = mapOf(DesktopSourceKind.TIDAL to tidalVerified, DesktopSourceKind.QOBUZ to qobuzVerified)
@@ -7258,7 +7260,7 @@ private fun DesktopSettingsScreen(
                             DesktopWireGuard.State.FAILED -> DesktopStrings["d_wg_row_failed", "Could not start — network blocked"] to Color(0xFFFF9F0A)
                             DesktopWireGuard.State.OFF -> null
                         },
-                        onClick = { wireGuardOpen = true },
+                        onClick = onOpenWireGuard,
                     )
                     SettingsToggle(
                         DesktopStrings["show_nerd_stats", "Show stats for nerds"],
@@ -7275,10 +7277,6 @@ private fun DesktopSettingsScreen(
         }
         }
             }
-    }
-
-    if (wireGuardOpen) {
-        DesktopWireGuardDialog(onDismiss = { wireGuardOpen = false })
     }
 
     editingSource?.let { config ->

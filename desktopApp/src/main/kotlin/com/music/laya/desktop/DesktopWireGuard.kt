@@ -217,6 +217,7 @@ internal object DesktopWireGuard {
         // The shared OkHttp client: HTTP CONNECT to the loopback listener (no login needed).
         Http.configureAtStartup(AppProxyRoute(AppProxyKind.HTTP, LOOPBACK, listening))
         ProxySelector.setDefault(LoopbackProxySelector(listening))
+        setFfmpegProxyEnvironment(listening)
     }
 
     private fun failClosed() {
@@ -224,6 +225,41 @@ internal object DesktopWireGuard {
         blockedPort = dead
         runCatching { Http.configureAtStartup(AppProxyRoute(AppProxyKind.HTTP, LOOPBACK, dead)) }
         ProxySelector.setDefault(LoopbackProxySelector(dead))
+        setFfmpegProxyEnvironment(dead)
+    }
+
+    /**
+     * FFmpeg's DASH and HLS demuxers do not hand the `http_proxy` option to their segment
+     * requests when the manifest is a local file (Tidal's), so those would leave outside the
+     * tunnel. FFmpeg's http and tls protocols also read the `http_proxy` environment variable,
+     * from the C runtime FFmpeg links (msvcrt.dll on Windows), so it is set there, in-process.
+     * Java's own environment is untouched (and Java ignores this variable).
+     */
+    private fun setFfmpegProxyEnvironment(target: Int) {
+        val proxy = "http://$LOOPBACK:$target"
+        runCatching {
+            if (DesktopPlatform.isWindows) {
+                val crt = com.sun.jna.Native.load("msvcrt", MsvcrtEnvironment::class.java)
+                for ((name, value) in listOf("http_proxy" to proxy, "no_proxy" to "localhost,127.0.0.1")) {
+                    crt._putenv_s(name, value)
+                    crt._wputenv_s(com.sun.jna.WString(name), com.sun.jna.WString(value))
+                }
+            } else {
+                val libc = com.sun.jna.Native.load("c", LibcEnvironment::class.java)
+                libc.setenv("http_proxy", proxy, 1)
+                libc.setenv("no_proxy", "localhost,127.0.0.1", 1)
+            }
+        }.onFailure { DesktopTrackLog.log("WireGuard/W: could not route FFmpeg segment requests: ${it.message}") }
+    }
+
+    @Suppress("FunctionName")
+    internal interface MsvcrtEnvironment : com.sun.jna.Library {
+        fun _putenv_s(name: String, value: String): Int
+        fun _wputenv_s(name: com.sun.jna.WString, value: com.sun.jna.WString): Int
+    }
+
+    internal interface LibcEnvironment : com.sun.jna.Library {
+        fun setenv(name: String, value: String, overwrite: Int): Int
     }
 
     /** A loopback port nothing listens on: bound, read, released. */

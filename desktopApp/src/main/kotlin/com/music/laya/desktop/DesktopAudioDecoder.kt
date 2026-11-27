@@ -158,8 +158,12 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         av_dict_set(options, "rw_timeout", "15000000", 0)
         // A manifest saved to disk (Tidal's DASH) may only fetch file/crypto/data by default; its
         // segments are https.
-        if (transport != null && url.startsWith("/")) {
-            av_dict_set(options, "protocol_whitelist", "file,http,https,tcp,tls,crypto,data", 0)
+        // A local path, not only one starting with "/": on Windows it starts with a drive letter, and without the
+        // whitelist the https segments are refused ("Protocol 'https' not on whitelist
+        // 'file,crypto,data'"), which surfaced as "could not open stream (Invalid argument)".
+        // httpproxy is how tls reaches https through an http_proxy (the WireGuard route).
+        if (transport != null && !url.contains("://")) {
+            av_dict_set(options, "protocol_whitelist", "file,http,https,tcp,tls,crypto,data,httpproxy", 0)
         }
 
         val opened = if (windowed) windowedContext(url, headers) else AVFormatContext(null)

@@ -206,17 +206,50 @@ internal object DesktopWireGuard {
         // needs to replace anything.
         val stamp = "${connection.contentLengthLong}-${connection.lastModified}"
         val name = if (windows) "laya_wg-$stamp.exe" else "laya_wg-$stamp"
-        val target = File(home, name)
-        if (!(target.isFile && target.length() == connection.contentLengthLong)) {
+        val placed = File(home, name)
+        var runnable = placed
+        if (!(placed.isFile && placed.length() == connection.contentLengthLong)) {
             val partial = File(home, "$name.partial")
-            connection.getInputStream().use { Files.copy(it, partial.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-            Files.move(partial.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            // An antivirus scanning a freshly written executable holds it open for a moment, and a
+            // move then fails with an AccessDeniedException naming only the path: retry, and if
+            // the move never goes through, run the copy where it was written.
+            retrying("write the WireGuard engine") {
+                javaClass.getResource(resource)!!.openStream().use {
+                    Files.copy(it, partial.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
+            runnable = runCatching {
+                retrying("move the WireGuard engine into place") {
+                    Files.move(partial.toPath(), placed.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+                placed
+            }.getOrElse {
+                DesktopTrackLog.log("WireGuard/W: running the engine from ${partial.name}: ${it.javaClass.simpleName}")
+                if (windows) File(home, "$name.partial.exe").takeIf { exe -> partial.renameTo(exe) } ?: partial else partial
+            }
         }
+        val target = runnable
         target.setExecutable(true, true)
         // Earlier builds' copies, when nothing is running them; one still in use stays until later.
-        home.listFiles()?.filter { it.name.startsWith("laya_wg") && it.name != name }?.forEach { runCatching { it.delete() } }
+        home.listFiles()?.filter { it.name.startsWith("laya_wg") && it != target }?.forEach { runCatching { it.delete() } }
         return target
     }
+
+    private fun <T> retrying(what: String, block: () -> T): T {
+        var last: Exception? = null
+        repeat(UNPACK_ATTEMPTS) { attempt ->
+            try {
+                return block()
+            } catch (failure: IOException) {
+                last = failure
+                if (attempt < UNPACK_ATTEMPTS - 1) Thread.sleep(UNPACK_RETRY_MS)
+            }
+        }
+        throw IOException("Could not $what (${last?.javaClass?.simpleName}: ${last?.message})", last)
+    }
+
+    private const val UNPACK_ATTEMPTS = 6
+    private const val UNPACK_RETRY_MS = 500L
 
     // ---- Routing ----------------------------------------------------------------------------
 

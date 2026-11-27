@@ -134,11 +134,18 @@ sealed class LosslessProvider(val id: String, val label: String, appVersion: Str
         // manifest of FLAC segments, which is saved where the player can open it.
         override suspend fun stream(trackId: String): LosslessStream? {
             if (preferHiRes && hiResRefusals < HI_RES_GIVE_UP_AFTER) {
+                var refused = true
                 val hiRes = try {
                     streamAt(trackId, "HI_RES_LOSSLESS")
+                } catch (cancel: kotlinx.coroutines.CancellationException) {
+                    // Cancelled (a race lost, the app starting up): not an answer from anyone.
+                    throw cancel
                 } catch (verify: VerificationRequired) {
                     throw verify
                 } catch (failure: Exception) {
+                    // Only the broker saying no counts as a refusal of the tier: a 4xx. A 5xx
+                    // ("Provider temporarily unavailable") or a network failure says nothing about it.
+                    refused = failure is ZarzException && HTTP_4XX.containsMatchIn(failure.message.orEmpty())
                     TrackLog.w(TAG, "Tidal: no hi-res for $trackId (${failure.message}); asking for LOSSLESS")
                     null
                 }
@@ -146,7 +153,7 @@ sealed class LosslessProvider(val id: String, val label: String, appVersion: Str
                     hiResRefusals = 0
                     return hiRes
                 }
-                hiResRefusals++
+                if (refused) hiResRefusals++
                 if (hiResRefusals >= HI_RES_GIVE_UP_AFTER) {
                     TrackLog.w(TAG, "Tidal: hi-res refused $hiResRefusals times in a row; asking for LOSSLESS only until restart")
                 }
@@ -155,6 +162,7 @@ sealed class LosslessProvider(val id: String, val label: String, appVersion: Str
         }
 
         private const val HI_RES_GIVE_UP_AFTER = 2
+        private val HTTP_4XX = Regex("HTTP 4[0-9][0-9]")
 
         private suspend fun streamAt(trackId: String, quality: String): LosslessStream? {
             val ticket = ticket("tid", trackId)

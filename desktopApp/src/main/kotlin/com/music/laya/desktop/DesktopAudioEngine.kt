@@ -190,6 +190,13 @@ class DesktopPlaybackEngine(
         var dropDecodedSamples = 0L
 
         /**
+         * Where this (incoming) deck's decoder was moved ahead of its Automix entry, or -1. Seeking
+         * there when the blend starts emptied the decode-ahead and left the audio thread waiting on
+         * the network for the cue, heard as a dropout at the start of the transition.
+         */
+        var preCuedUs = -1L
+
+        /**
          * Karaoke for this deck alone, on the decoder's own frames: before the rate converter,
          * the blend and the stretch, so the neural vocal it subtracts lines up sample for sample.
          */
@@ -1933,6 +1940,15 @@ class DesktopPlaybackEngine(
 
         val plan = transitionPlan(track, incoming.song, (incoming.decoder.durationUs ?: 0L) / 1_000, positionMs, duration)
         publishTransitionWindow(track, plan, duration)
+        // Move the incoming deck to its entry point as soon as the plan names one, well before the
+        // blend, so what it will play is already decoded when the blend starts.
+        if (plan.incomingCueTime > 0 && !plan.blocked) {
+            val cueUs = (plan.incomingCueTime * 1_000_000).toLong()
+            if (incoming.preCuedUs != cueUs) {
+                incoming.decoder.seek(cueUs)
+                incoming.preCuedUs = cueUs
+            }
+        }
 
         if (!plan.shouldStart || plan.blocked) return
         armIncomingBlend(incoming, plan)
@@ -1949,12 +1965,18 @@ class DesktopPlaybackEngine(
         // difference between Automix and a crossfade.
         if (plan.incomingCueTime > 0) {
             val cueUs = (plan.incomingCueTime * 1_000_000).toLong()
-            incoming.decoder.seek(cueUs)
+            // Already there (see maybeStartCrossfade) in the ordinary case: no seek, no wait.
+            if (incoming.preCuedUs != cueUs) incoming.decoder.seek(cueUs)
+            incoming.preCuedUs = cueUs
             incoming.seekKaraoke(cueUs)
             // The track now begins here, and every position reported for it is measured from it.
             // Left at zero, the scrubber and the lyrics ran the whole cue behind the audio for the
             // rest of the track — which only a manual seek could put right.
             incoming.startUs = cueUs
+        } else if (incoming.preCuedUs > 0) {
+            // Moved ahead for a plan that, in the end, enters from the top (a skip mixing now).
+            incoming.decoder.seek(0)
+            incoming.preCuedUs = -1
         }
         DesktopTrackLog.log(
             "transition into '${incoming.song.title}': ${"%.1f".format(seconds)}s" +

@@ -22,17 +22,29 @@ internal object DesktopTrackLog {
         }.getOrNull()
     }
 
+    /**
+     * Written on a thread of its own: the audio thread logs too (a transition, a converter), and an
+     * open-append-close per line on Windows could hold it up long enough to be heard.
+     */
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "laya-log").apply { isDaemon = true }
+    }
+
     fun log(line: String) {
         val stamped = "${LocalTime.now().format(clock)}  $line"
-        println("Laya: $stamped")
-        val target = file ?: return
         runCatching {
-            Files.writeString(
-                target,
-                stamped + System.lineSeparator(),
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND,
-            )
+            writer.execute {
+                println("Laya: $stamped")
+                val target = file ?: return@execute
+                runCatching {
+                    Files.writeString(
+                        target,
+                        stamped + System.lineSeparator(),
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.APPEND,
+                    )
+                }
+            }
         }
     }
 }

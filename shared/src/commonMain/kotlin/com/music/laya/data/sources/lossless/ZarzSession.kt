@@ -213,7 +213,7 @@ class ZarzSession internal constructor(
             throw ZarzException("Verification response held no session")
         }
         save(record.copy(sessionId = fields.str("session_id"), sessionSecret = fields.str("session_secret"), expiresAt = fields.str("expires_at")))
-        TrackLog.d(TAG, "$appVersion: verified")
+        TrackLog.d(TAG, "$appVersion: verified; session ends ${describeExpiry()}")
     }
 
     /**
@@ -232,6 +232,7 @@ class ZarzSession internal constructor(
         while (true) {
             val current = record
             if (!current.usable(Clock.System.now())) {
+                TrackLog.w(TAG, "$appVersion: session past its end (${current.expiresAt.ifBlank { "no end given" }}); verification needed")
                 mutex.withLock { lose(current) }
                 throw VerificationRequired()
             }
@@ -253,6 +254,12 @@ class ZarzSession internal constructor(
                     delay(PROVIDER_RETRY_MS)
                 }
                 rejected -> {
+                    TrackLog.w(
+                        TAG,
+                        "$appVersion: broker refused the session on $path: HTTP ${response.code} $code" +
+                            (error?.str("error")?.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()) +
+                            "; it ended ${describeExpiry()}",
+                    )
                     mutex.withLock { lose(current, VerificationLoss.Rejected) }
                     throw VerificationRequired()
                 }
@@ -269,6 +276,13 @@ class ZarzSession internal constructor(
      * lost just because nothing was played during that hour.
      */
     suspend fun keepAlive() = refreshIfDue()
+
+    /** When the held session ends, and how far off that is, for the log. */
+    private fun describeExpiry(): String {
+        val end = record.expiry() ?: return "(no end given)"
+        val left = end - Clock.System.now()
+        return "$end (in ${left.inWholeMinutes} min)"
+    }
 
     /** Mornye refreshes within the last hour of a session's life; a failure leaves the old one in use. */
     private suspend fun refreshIfDue() = mutex.withLock {
@@ -288,6 +302,9 @@ class ZarzSession internal constructor(
                         expiresAt = fields.str("expires_at").ifBlank { record.expiresAt },
                     ),
                 )
+                TrackLog.d(TAG, "$appVersion: session refreshed; now ends ${describeExpiry()}")
+            } else {
+                TrackLog.w(TAG, "$appVersion: session refresh answered HTTP ${response.code}")
             }
         }.onFailure { TrackLog.w(TAG, "$appVersion: session refresh failed: ${it.message}") }
     }

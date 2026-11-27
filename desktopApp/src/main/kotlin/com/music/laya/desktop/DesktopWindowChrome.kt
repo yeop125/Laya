@@ -209,13 +209,13 @@ private fun MacCaptionButton(
  */
 // Larger than macOS' own (12 pt dots) at the listener's request: at 100% Windows scaling the
 // originals were hard to hit.
-private val CAPTION_TOUCH_SIZE = 30.dp
-private val CAPTION_HEIGHT = 32.dp
-private val MAC_DOT_RADIUS = 8.5.dp
+private val CAPTION_TOUCH_SIZE = 38.dp
+private val CAPTION_HEIGHT = 40.dp
+private val MAC_DOT_RADIUS = 11.dp
 
 /** Half the width of a glyph, and the weight every one of them is drawn at. */
-private val GLYPH_HALF = 3.5.dp
-private val HAIRLINE = 1.1.dp
+private val GLYPH_HALF = 4.5.dp
+private val HAIRLINE = 1.4.dp
 
 private val MAC_CLOSE = Color(0xFFFF5F57)
 private val MAC_MINIMIZE = Color(0xFFFFBD2E)

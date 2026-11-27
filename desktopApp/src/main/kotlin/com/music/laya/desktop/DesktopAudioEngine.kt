@@ -827,6 +827,18 @@ class DesktopPlaybackEngine(
 
     /** The playing track's heard position, on the sink's played-frame count; see [play]. */
     private val playhead = DesktopPlayhead()
+
+    /**
+     * A better rendition replacing the playing one mid-song (Opus to Tidal's FLAC) is faded in over
+     * the old one instead of cut to: [swapOutgoing] keeps playing under it for [SWAP_FADE_MS], at
+     * the output's current rate, so the device is neither flushed nor reopened. Audio thread only.
+     */
+    private var swapOutgoing: Track? = null
+    private var swapTotal = 0
+    private var swapRemaining = 0
+    private var swapBuffer = FloatArray(0)
+    private var swapBuffered = 0
+
     private var fadeRemaining = 0
     private var fadeTotal = 0
     /** Fade plus any echo/roll/reverb tail. [fadeTotal] remains the nominal fader span. */
@@ -934,6 +946,7 @@ class DesktopPlaybackEngine(
             return
         }
         if (count == 0) return
+        if (swapOutgoing != null) mixSwap(block, count)
 
         val (blended, blendedCount) = blend(track, block, count)
         val quiet = silence?.also { it.enabled = skipSilenceEnabled }
@@ -1090,6 +1103,44 @@ class DesktopPlaybackEngine(
     }
 
     /** Reads the playing deck, preserving a tempo buffer inherited from its incoming handoff. */
+    /** Equal-power fade from [swapOutgoing] into [block], the new rendition's next samples. */
+    private fun mixSwap(block: FloatArray, count: Int) {
+        val old = swapOutgoing ?: return
+        val channels = sink.format.channels.coerceAtLeast(1)
+        while (swapBuffered < count) {
+            val more = readSource(old) ?: break
+            val n = sourceReadCount
+            if (swapBuffer.size < swapBuffered + n) swapBuffer = swapBuffer.copyOf((swapBuffered + n) * 2)
+            System.arraycopy(more, 0, swapBuffer, swapBuffered, n)
+            swapBuffered += n
+        }
+        val usable = minOf(count, swapBuffered)
+        var i = 0
+        while (i < count && swapRemaining > 0) {
+            val progress = 1f - swapRemaining.toFloat() / swapTotal
+            val gainNew = kotlin.math.sin(progress * Math.PI / 2).toFloat()
+            val gainOld = kotlin.math.cos(progress * Math.PI / 2).toFloat()
+            for (c in 0 until channels) {
+                val at = i + c
+                if (at >= count) break
+                val oldSample = if (at < usable) swapBuffer[at] else 0f
+                block[at] = block[at] * gainNew + oldSample * gainOld
+            }
+            i += channels
+            swapRemaining--
+        }
+        if (usable < swapBuffered) System.arraycopy(swapBuffer, usable, swapBuffer, 0, swapBuffered - usable)
+        swapBuffered -= usable
+        if (swapRemaining <= 0) dropSwap()
+    }
+
+    private fun dropSwap() {
+        swapOutgoing?.decoder?.close()
+        swapOutgoing = null
+        swapRemaining = 0
+        swapBuffered = 0
+    }
+
     private fun readCurrent(track: Track): FloatArray? {
         // An eased-out stretch whose held audio has all been played: back on the decoder itself.
         // Left in place, the stretcher went on windowing the track at 1x until it ended — never
@@ -1414,6 +1465,7 @@ class DesktopPlaybackEngine(
                     if (wasBlending) endBlend()
                 }
                 Command.Flush -> {
+                    dropSwap()
                     current?.decoder?.close()
                     current = null
                     upcoming?.decoder?.close()
@@ -1472,6 +1524,27 @@ class DesktopPlaybackEngine(
             track.decoder.close()
             return
         }
+        val playing = current
+        if (playing != null && playing !== track && playWhenReady && !paused && sink.isOpen &&
+            playing.tempo == null && track.tempo == null && swapOutgoing == null
+        ) {
+            // Where the audio already handed to the device ends: the new rendition picks up there.
+            val endUs = playhead.peek(framesWritten)
+            track.decoder.seek(endUs)
+            track.startUs = endUs
+            track.seekKaraoke(endUs)
+            swapOutgoing = playing
+            swapTotal = (SWAP_FADE_MS * sink.format.sampleRate / 1_000).toInt().coerceAtLeast(1)
+            swapRemaining = swapTotal
+            swapBuffered = 0
+            current = track
+            publishTrack(track, isPlaying = true, positionUs = playhead.peek(sink.framesPlayed()))
+            DesktopTrackLog.log(
+                "crossfading '${track.song.title}' onto ${track.stream.format.summary.ifBlank { "the new rendition" }}" +
+                    " over ${SWAP_FADE_MS}ms, keeping the output at ${sink.format.sampleRate} Hz",
+            )
+            return
+        }
         sink.flush()
         framesWritten = sink.framesPlayed()
         activePlan = null
@@ -1489,6 +1562,7 @@ class DesktopPlaybackEngine(
     }
 
     private fun startTrack(track: Track, playWhenReady: Boolean) {
+        dropSwap()
         // Never the one being started: a restart of the current track would otherwise close the
         // decoder it is about to read from.
         if (current !== track) current?.decoder?.close()
@@ -1587,6 +1661,7 @@ class DesktopPlaybackEngine(
     }
 
     private fun performSeek(millis: Long) {
+        dropSwap()
         // Past the midpoint the listener is looking at — and seeking in — the incoming song, so
         // the blend is finished on the spot and the seek lands on that one.
         if (displaySwitched && upcoming != null) promoteUpcoming()
@@ -1930,6 +2005,7 @@ class DesktopPlaybackEngine(
     }
 
     private fun closeEverything() {
+        dropSwap()
         current?.decoder?.close()
         upcoming?.decoder?.close()
         current = null
@@ -2085,6 +2161,9 @@ class DesktopPlaybackEngine(
         private const val ANCHOR_TOLERANCE_NANOS = 25_000_000L
 
         private const val MIX_END_PADDING_FRAMES = 2_048
+
+        /** How long a better rendition is faded in over the one it replaces mid-song. */
+        private const val SWAP_FADE_MS = 400L
         private const val DEFAULT_TEMPO_OUTPUT_SAMPLES = 4_096
         private const val TEMPO_STEP_PER_BEAT = 0.0075
         private const val EASE_FALLBACK_SECONDS = 0.5

@@ -121,10 +121,19 @@ sealed class LosslessProvider(val id: String, val label: String, appVersion: Str
          */
         var preferHiRes: Boolean = false
 
+        /**
+         * Hi-res asks refused in a row. Tidal answers a hi-res ask for a track without that tier with
+         * its best tier, so a refusal is the broker turning the tier down; after
+         * [HI_RES_GIVE_UP_AFTER] of them this run stops asking, so a broker without it costs the
+         * extra round trip on the first tracks only. Reset on any hi-res answer and at launch.
+         */
+        @kotlin.concurrent.Volatile
+        private var hiResRefusals = 0
+
         // LOSSLESS (16/44.1). The broker answers with a plain FLAC URL or, more often now, a DASH
         // manifest of FLAC segments, which is saved where the player can open it.
         override suspend fun stream(trackId: String): LosslessStream? {
-            if (preferHiRes) {
+            if (preferHiRes && hiResRefusals < HI_RES_GIVE_UP_AFTER) {
                 val hiRes = try {
                     streamAt(trackId, "HI_RES_LOSSLESS")
                 } catch (verify: VerificationRequired) {
@@ -133,10 +142,19 @@ sealed class LosslessProvider(val id: String, val label: String, appVersion: Str
                     TrackLog.w(TAG, "Tidal: no hi-res for $trackId (${failure.message}); asking for LOSSLESS")
                     null
                 }
-                if (hiRes != null) return hiRes
+                if (hiRes != null) {
+                    hiResRefusals = 0
+                    return hiRes
+                }
+                hiResRefusals++
+                if (hiResRefusals >= HI_RES_GIVE_UP_AFTER) {
+                    TrackLog.w(TAG, "Tidal: hi-res refused $hiResRefusals times in a row; asking for LOSSLESS only until restart")
+                }
             }
             return streamAt(trackId, "LOSSLESS")
         }
+
+        private const val HI_RES_GIVE_UP_AFTER = 2
 
         private suspend fun streamAt(trackId: String, quality: String): LosslessStream? {
             val ticket = ticket("tid", trackId)

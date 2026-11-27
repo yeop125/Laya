@@ -263,6 +263,13 @@ class ZarzSession internal constructor(
         }
     }
 
+    /**
+     * Refreshes the session when it is in its last hour, without any other call. For a platform
+     * that keeps the app open between plays (the desktop) to call on a timer, so a session is not
+     * lost just because nothing was played during that hour.
+     */
+    suspend fun keepAlive() = refreshIfDue()
+
     /** Mornye refreshes within the last hour of a session's life; a failure leaves the old one in use. */
     private suspend fun refreshIfDue() = mutex.withLock {
         val now = Clock.System.now()

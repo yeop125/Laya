@@ -114,15 +114,37 @@ sealed class LosslessProvider(val id: String, val label: String, appVersion: Str
             }
         }
 
+        /**
+         * Ask for HI_RES_LOSSLESS (up to 24/192) first, falling back to LOSSLESS (16/44.1) when the
+         * broker or the track has no such tier. Off by default; a platform opts in (the desktop
+         * does). Whether the broker grants it is the broker's call: a refusal is only a fallback.
+         */
+        var preferHiRes: Boolean = false
+
         // LOSSLESS (16/44.1). The broker answers with a plain FLAC URL or, more often now, a DASH
         // manifest of FLAC segments, which is saved where the player can open it.
         override suspend fun stream(trackId: String): LosslessStream? {
+            if (preferHiRes) {
+                val hiRes = try {
+                    streamAt(trackId, "HI_RES_LOSSLESS")
+                } catch (verify: VerificationRequired) {
+                    throw verify
+                } catch (failure: Exception) {
+                    TrackLog.w(TAG, "Tidal: no hi-res for $trackId (${failure.message}); asking for LOSSLESS")
+                    null
+                }
+                if (hiRes != null) return hiRes
+            }
+            return streamAt(trackId, "LOSSLESS")
+        }
+
+        private suspend fun streamAt(trackId: String, quality: String): LosslessStream? {
             val ticket = ticket("tid", trackId)
             val payload = session.post(
                 "/dl/tid",
                 buildJsonObject {
                     put("id", trackId)
-                    put("quality", "LOSSLESS")
+                    put("quality", quality)
                 },
                 mapOf("X-Zarz-Ticket" to ticket),
             )

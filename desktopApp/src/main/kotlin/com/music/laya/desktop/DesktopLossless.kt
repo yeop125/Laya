@@ -10,6 +10,7 @@ import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import io.ktor.http.Url
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.util.Base64
 
@@ -41,6 +42,26 @@ internal object DesktopLossless {
         }
         LosslessStore.manifestFile = { name, mpd -> manifestFile(name, mpd) }
         LosslessProvider.all.forEach { it.session.reload() }
+        // Tidal's hi-res tier (up to 24/192) first, its 16/44.1 tier when that is refused.
+        LosslessProvider.Tidal.preferHiRes = true
+        keepSessionsAlive()
+    }
+
+    /**
+     * A broker session is only refreshed in its last hour, and only when a call is made. With the
+     * app open but nothing played through that hour it ran out and asked for the captcha again;
+     * so, while the app runs, each session is offered a refresh every few minutes.
+     */
+    private fun keepSessionsAlive() {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        scope.launch {
+            while (true) {
+                LosslessProvider.all.forEach { provider ->
+                    runCatching { provider.session.keepAlive() }
+                }
+                kotlinx.coroutines.delay(KEEP_ALIVE_EVERY_MS)
+            }
+        }
     }
 
     /** FFmpeg's DASH demuxer opens a local manifest; its segment URLs are absolute. */
@@ -172,4 +193,6 @@ window.addEventListener('message',function(e){
     }
 
     private const val VERIFY_TIMEOUT_MS = 10 * 60_000L
+
+    private const val KEEP_ALIVE_EVERY_MS = 10 * 60_000L
 }

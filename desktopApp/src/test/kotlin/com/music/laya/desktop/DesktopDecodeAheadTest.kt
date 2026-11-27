@@ -50,6 +50,26 @@ class DesktopDecodeAheadTest {
     )
 
     @Test
+    fun `awaitBuffered waits for the decoder off the audio thread, then has it all queued`() {
+        val source = CountingSource(blocks = 10).apply { stall = CountDownLatch(1) }
+        val reader = ahead(source, aheadSamples = 16)
+        // Stalled like a network fetch: nothing is there yet, and the wait gives up in time.
+        assertEquals(false, reader.awaitBuffered(16, timeoutMs = 50))
+        source.stall?.countDown()
+        assertEquals(true, reader.awaitBuffered(16, timeoutMs = 5_000))
+        // What it waited for is now read without waiting.
+        assertEquals(0, reader.readSamples()?.first()?.toInt())
+        reader.close()
+    }
+
+    @Test
+    fun `awaitBuffered is satisfied by the end of a short track`() {
+        val reader = ahead(CountingSource(blocks = 1), aheadSamples = 64)
+        assertEquals(true, reader.awaitBuffered(64, timeoutMs = 5_000))
+        reader.close()
+    }
+
+    @Test
     fun `plays every block in order and then ends`() {
         val reader = ahead(CountingSource(blocks = 10))
         val seen = generateSequence { reader.readSamples()?.copyOf(reader.sampleCount) }.map { it.first().toInt() }.toList()

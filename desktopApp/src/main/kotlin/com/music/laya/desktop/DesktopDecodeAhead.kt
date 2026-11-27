@@ -87,6 +87,21 @@ internal class DesktopDecodeAhead(
         block
     }
 
+    /**
+     * Waits, off the audio thread, until at least [samples] are decoded ahead (or the track ended,
+     * or [timeoutMs] passed). Says whether that much is there. Used before a mid-song swap so the
+     * audio thread never waits on the network for the incoming rendition.
+     */
+    fun awaitBuffered(samples: Int, timeoutMs: Long): Boolean = lock.withLock {
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000
+        while (queuedSamples < samples && !ended && !closed) {
+            val left = deadline - System.nanoTime()
+            if (left <= 0) return@withLock false
+            ready.awaitNanos(left)
+        }
+        queuedSamples >= samples || ended
+    }
+
     /** Moves to [micros]; whatever was decoded ahead of the old position is thrown away. */
     fun seek(micros: Long): Boolean {
         lock.withLock {

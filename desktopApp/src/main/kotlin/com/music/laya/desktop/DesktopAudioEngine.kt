@@ -183,6 +183,13 @@ class DesktopPlaybackEngine(
         var converter: DesktopRateConverter? = null
 
         /**
+         * Decoded samples to throw away before the next one is heard: how a mid-song swap lines
+         * the new rendition up with the old without a seek (which would empty the decode-ahead and
+         * leave the audio thread waiting on the network).
+         */
+        var dropDecodedSamples = 0L
+
+        /**
          * Karaoke for this deck alone, on the decoder's own frames: before the rate converter,
          * the blend and the stretch, so the neural vocal it subtracts lines up sample for sample.
          */
@@ -419,7 +426,18 @@ class DesktopPlaybackEngine(
                         track.startUs = latest.positionMs * 1_000
                         track.seekKaraoke(track.startUs)
                     }
-                    commands += Command.ReplaceCurrent(track, playWhenReady = latest.isPlaying)
+                    // Hand it over only once it has audio decoded ahead, so the crossfade never
+                    // waits on the network (the rendition may come through the WireGuard tunnel).
+                    val format = track.decoder.outputFormat
+                    val prebuffer = format.sampleRate * format.channels.coerceAtLeast(1) * SWAP_PREBUFFER_SECONDS
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        track.decoder.awaitBuffered(prebuffer, SWAP_PREBUFFER_TIMEOUT_MS)
+                    }
+                    if (_state.value.song?.videoId != song.videoId) {
+                        track.decoder.close()
+                        return@fold
+                    }
+                    commands += Command.ReplaceCurrent(track, playWhenReady = _state.value.isPlaying)
                 },
                 onFailure = { failure ->
                     DesktopTrackLog.log(
@@ -1212,8 +1230,20 @@ class DesktopPlaybackEngine(
      * Android never meets it: each of its players has its own output.
      */
     private fun readSource(track: Track): FloatArray? {
-        val block = track.decoder.readSamples() ?: return null
-        val count = track.decoder.sampleCount
+        var block = track.decoder.readSamples() ?: return null
+        var count = track.decoder.sampleCount
+        while (track.dropDecodedSamples > 0) {
+            if (track.dropDecodedSamples >= count) {
+                track.dropDecodedSamples -= count
+                block = track.decoder.readSamples() ?: return null
+                count = track.decoder.sampleCount
+            } else {
+                val drop = track.dropDecodedSamples.toInt()
+                block = block.copyOfRange(drop, count)
+                count -= drop
+                track.dropDecodedSamples = 0
+            }
+        }
         karaokeDeck(track, block, count)
         val from = track.decoder.outputFormat.sampleRate
         val to = sink.format.sampleRate
@@ -1530,7 +1560,14 @@ class DesktopPlaybackEngine(
         ) {
             // Where the audio already handed to the device ends: the new rendition picks up there.
             val endUs = playhead.peek(framesWritten)
-            track.decoder.seek(endUs)
+            // Line the new rendition up by dropping what it decoded before that point, not by a
+            // seek: a seek empties its decode-ahead and the audio thread would wait on the network.
+            val decoded = track.decoder.outputFormat
+            val lead = endUs - track.startUs
+            if (lead > 0) {
+                track.dropDecodedSamples =
+                    lead * decoded.sampleRate / 1_000_000 * decoded.channels.coerceAtLeast(1)
+            }
             track.startUs = endUs
             track.seekKaraoke(endUs)
             swapOutgoing = playing
@@ -2164,6 +2201,12 @@ class DesktopPlaybackEngine(
 
         /** How long a better rendition is faded in over the one it replaces mid-song. */
         private const val SWAP_FADE_MS = 400L
+
+        /** Decoded ahead before a mid-song swap is handed to the audio thread. */
+        private const val SWAP_PREBUFFER_SECONDS = 3
+
+        /** How long a swap waits for that before going ahead anyway. */
+        private const val SWAP_PREBUFFER_TIMEOUT_MS = 15_000L
         private const val DEFAULT_TEMPO_OUTPUT_SAMPLES = 4_096
         private const val TEMPO_STEP_PER_BEAT = 0.0075
         private const val EASE_FALLBACK_SECONDS = 0.5

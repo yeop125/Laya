@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,6 +89,9 @@ internal fun DesktopPlayerSheet(
                 ),
         ) {
             content(windowWidth, windowHeight)
+            // The window's own buttons on the player too, so it can be minimised or closed
+            // without first putting the player away.
+            DesktopWindowButtons(Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 10.dp))
             // The handle the landscape player draws at its top edge, made to do
             // on a click what it promises for a drag.
             Box(

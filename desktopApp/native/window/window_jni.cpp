@@ -175,7 +175,13 @@ bool install_frame(HWND window) {
 
     LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
     style &= ~static_cast<LONG_PTR>(WS_POPUP);
-    style |= WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME |
+    // No WS_SYSMENU: with it, DWM draws its own minimise/maximise/close glyphs in the top-right
+    // corner whenever the frame is extended over the client (the Mica/Acrylic backdrop), where
+    // they cannot be clicked because the area is Compose's. The app's own caption buttons do
+    // that job; minimise and maximise still work through WM_SYSCOMMAND, and the taskbar still
+    // minimises and restores the window (WS_MINIMIZEBOX / WS_MAXIMIZEBOX stay).
+    style &= ~static_cast<LONG_PTR>(WS_SYSMENU);
+    style |= WS_OVERLAPPED | WS_CAPTION | WS_THICKFRAME |
         WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
     SetWindowLongPtrW(window, GWL_STYLE, style);
 
@@ -228,11 +234,6 @@ bool set_backdrop(HWND window, int kind) {
     return true;
 }
 
-bool send_system_command(UINT command) {
-    HWND window = g_window;
-    return window != nullptr && IsWindow(window) &&
-        PostMessageW(window, WM_SYSCOMMAND, command, 0) != 0;
-}
 
 /**
  * Fills the whole monitor — taskbar included — with a frameless window above it. A maximized window
@@ -802,7 +803,11 @@ Java_com_music_laya_desktop_DesktopWindowsFrame_nativeInstall(
 
 JNIEXPORT jboolean JNICALL
 Java_com_music_laya_desktop_DesktopWindowsFrame_nativeMinimize(JNIEnv*, jclass) {
-    return send_system_command(SC_MINIMIZE) ? JNI_TRUE : JNI_FALSE;
+    // ShowWindowAsync rather than WM_SYSCOMMAND: the window has no WS_SYSMENU (see install_frame),
+    // and this does not depend on it.
+    HWND window = g_window;
+    if (window == nullptr || !IsWindow(window)) return JNI_FALSE;
+    return ShowWindowAsync(window, SW_MINIMIZE) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
@@ -822,7 +827,7 @@ JNIEXPORT jboolean JNICALL
 Java_com_music_laya_desktop_DesktopWindowsFrame_nativeToggleMaximize(JNIEnv*, jclass) {
     HWND window = g_window;
     if (window == nullptr || !IsWindow(window)) return JNI_FALSE;
-    return send_system_command(IsZoomed(window) ? SC_RESTORE : SC_MAXIMIZE)
+    return ShowWindowAsync(window, IsZoomed(window) ? SW_RESTORE : SW_MAXIMIZE)
         ? JNI_TRUE : JNI_FALSE;
 }
 

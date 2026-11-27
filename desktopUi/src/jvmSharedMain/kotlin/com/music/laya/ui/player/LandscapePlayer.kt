@@ -449,6 +449,8 @@ internal fun LandscapeMainPane(
     /** Null where Settings hides the volume bar. */
     volume: (@Composable () -> Unit)?,
     modifier: Modifier = Modifier,
+    /** Stats for nerds, under the controls so they never cover the artwork. */
+    stats: (@Composable () -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -473,6 +475,10 @@ internal fun LandscapeMainPane(
         if (volume != null) {
             Spacer(Modifier.height(if (compact) 0.dp else 12.dp))
             volume()
+        }
+        if (stats != null) {
+            Spacer(Modifier.height(if (compact) 2.dp else 10.dp))
+            stats()
         }
     }
 }

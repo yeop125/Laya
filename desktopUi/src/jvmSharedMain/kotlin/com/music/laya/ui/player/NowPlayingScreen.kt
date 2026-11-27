@@ -2183,23 +2183,23 @@ fun NowPlayingScreen(
                                     )
                                 }
                             }
-                            // The stats belong to the player, not to the sleeve, so
-                            // they leave it along with the rest of the player.
-                            SleeveNerdStats(
-                                song = song,
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .padding(horizontal = 10.dp, vertical = 8.dp)
-                                    // Faded with the player rather than flown with
-                                    // the sleeve: the cover in the bar has none.
-                                    .graphicsLayer { alpha = if (panelOpen) 0f else dockFade() },
-                            )
+                            // Stats for nerds sit under the controls (LandscapeMainPane's
+                            // stats slot) so they never cover the artwork.
                         }
                     },
                     actions = playerActions,
                     controls = { compact ->
                         LandscapeMainPane(
                             compact = compact,
+                            stats = {
+                                SleeveNerdStats(
+                                    song = song,
+                                    alignStart = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .graphicsLayer { alpha = if (panelOpen) 0f else dockFade() },
+                                )
+                            },
                             caption = if (hideSongStatus) null else playbackOriginText(song, playedBy),
                             onOpenCaption = openPlaybackOrigin,
                             credits = {

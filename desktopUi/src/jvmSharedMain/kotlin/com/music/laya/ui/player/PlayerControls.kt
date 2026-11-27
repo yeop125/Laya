@@ -360,7 +360,12 @@ internal fun PlaybackQualityLabel(
  * it what Automix's analysis is doing. Nothing at all while the setting is off.
  */
 @Composable
-internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
+internal fun SleeveNerdStats(
+    song: Song,
+    modifier: Modifier = Modifier,
+    /** Start when the stats sit under the controls rather than centred on the sleeve. */
+    alignStart: Boolean = false,
+) {
     val showNerdStats by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
     if (!showNerdStats) return
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
@@ -388,8 +393,9 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
             blurRadius = 4f,
         ),
     )
+    val lineAlign = if (alignStart) TextAlign.Start else TextAlign.Center
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = if (alignStart) Alignment.Start else Alignment.CenterHorizontally,
         modifier = modifier,
     ) {
         nerdStats?.describe()?.let { stats ->
@@ -399,7 +405,7 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
                 color = Color.White.copy(alpha = 0.65f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
+                textAlign = lineAlign,
             )
         }
         // Only when Automix is actually switched on: otherwise this would
@@ -431,7 +437,7 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
                 color = Color.White.copy(alpha = 0.5f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
+                textAlign = lineAlign,
             )
         }
     }

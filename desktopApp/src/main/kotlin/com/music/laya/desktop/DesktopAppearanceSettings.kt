@@ -21,6 +21,7 @@ internal object DesktopAppearanceSettings {
     private val _systemFont = flag(KEY_SYSTEM_FONT, false)
     private val _miniPlayerVideo = flag(KEY_MINI_PLAYER_VIDEO, false)
     private val _preferMusicOnly = flag(KEY_PREFER_MUSIC_ONLY, true)
+    private val _lookUpMusicVideos = flag(KEY_LOOK_UP_MUSIC_VIDEOS, true)
 
     /** Freezes the main player's gradient instead of drifting. */
     val reduceAnimation: StateFlow<Boolean> = _reduceAnimation
@@ -46,6 +47,9 @@ internal object DesktopAppearanceSettings {
      */
     val preferMusicOnly: StateFlow<Boolean> = _preferMusicOnly
 
+    /** Off: no music video is searched for or fetched as each song starts (no audio/video switch). */
+    val lookUpMusicVideos: StateFlow<Boolean> = _lookUpMusicVideos
+
     fun setReduceAnimation(value: Boolean) = write(KEY_REDUCE_ANIMATION, value, _reduceAnimation)
 
     fun setReduceDynamicBlur(value: Boolean) = write(KEY_REDUCE_DYNAMIC_BLUR, value, _reduceDynamicBlur)
@@ -59,6 +63,7 @@ internal object DesktopAppearanceSettings {
     fun setMiniPlayerVideo(value: Boolean) = write(KEY_MINI_PLAYER_VIDEO, value, _miniPlayerVideo)
 
     fun setPreferMusicOnly(value: Boolean) = write(KEY_PREFER_MUSIC_ONLY, value, _preferMusicOnly)
+    fun setLookUpMusicVideos(value: Boolean) = write(KEY_LOOK_UP_MUSIC_VIDEOS, value, _lookUpMusicVideos)
 
     private fun write(key: String, value: Boolean, into: MutableStateFlow<Boolean>) {
         DesktopPersistence().saveBoolean(key, value)
@@ -72,4 +77,5 @@ internal object DesktopAppearanceSettings {
     internal const val KEY_SYSTEM_FONT = "system_font"
     internal const val KEY_MINI_PLAYER_VIDEO = "mini_player_video"
     internal const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
+    internal const val KEY_LOOK_UP_MUSIC_VIDEOS = "look_up_music_videos"
 }

@@ -98,6 +98,9 @@
     <string name="d_voice_downloading">다운로드 중 %1$s%%</string>
     <string name="d_voice_download_failed">다운로드 실패, 다시 시도하세요</string>
 
+    <string name="d_look_up_music_videos">뮤직비디오 찾기</string>
+    <string name="d_look_up_music_videos_subtitle">곡이 시작될 때 음원/영상 전환용 뮤직비디오를 찾습니다. 끄면 곡이 바뀔 때 하는 작업이 줄어듭니다</string>
+
     <!-- WireGuard (데스크톱) -->
     <string name="d_wg_row_subtitle">Laya의 트래픽을 내 WireGuard 서버로 보냅니다</string>
     <string name="d_wg_row_on">연결됨</string>

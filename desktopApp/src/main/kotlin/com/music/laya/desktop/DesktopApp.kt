@@ -2022,6 +2022,9 @@ fun LayaDesktopApp() {
         // A saved song still offers its music video, streamed; a saved video is never swapped away
         // from the file for a stream of its audio.
         if (playing == null || partyState.inParty || (playing.localUri != null && playing.isVideo)) return@LaunchedEffect
+        // Switched off in Settings: nothing is searched for or fetched as a song starts. A video row
+        // still plays (as its own audio); only the switch to the other cut is not offered.
+        if (!DesktopAppearanceSettings.lookUpMusicVideos.value) return@LaunchedEffect
         if (playing.isVideo) DesktopMusicVideo.prefetch(playing.videoId)
         var song = asPlayed(playing)
         // Without "Prefer music-only version" a video is watched from the start, never swapped.
@@ -7031,6 +7034,16 @@ private fun DesktopSettingsScreen(
                         ],
                         preferMusicOnly,
                         DesktopAppearanceSettings::setPreferMusicOnly,
+                    )
+                    val lookUpMusicVideos by DesktopAppearanceSettings.lookUpMusicVideos.collectAsState()
+                    SettingsToggle(
+                        DesktopStrings["d_look_up_music_videos", "Look up music videos"],
+                        DesktopStrings[
+                            "d_look_up_music_videos_subtitle",
+                            "Find each song's music video as it starts, for the audio/video switch. Off saves work when a song changes",
+                        ],
+                        lookUpMusicVideos,
+                        DesktopAppearanceSettings::setLookUpMusicVideos,
                     )
                     val miniPlayerVideo by DesktopAppearanceSettings.miniPlayerVideo.collectAsState()
                     SettingsToggle(

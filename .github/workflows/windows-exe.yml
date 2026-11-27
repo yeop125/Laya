@@ -24,6 +24,11 @@ jobs:
       LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
       LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
       LOSSLESS_USER_AGENT: ${{ vars.LOSSLESS_USER_AGENT }}
+      # The runner image ships an Android SDK, which makes settings.gradle.kts pull in the Android
+      # modules and download an NDK this desktop-only build never uses (and which can arrive
+      # corrupt). Point both variables at nothing so only the desktop modules are configured.
+      ANDROID_HOME: C:\no-android-sdk
+      ANDROID_SDK_ROOT: C:\no-android-sdk
 
     steps:
     - name: Checkout Repository

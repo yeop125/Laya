@@ -379,15 +379,39 @@ internal object DesktopSourceRegistry {
                 "  asking for: " + DesktopTrackMatcher.queries(song).joinToString(" | ").ifBlank { "(nothing)" },
             )
         }
+        val raceStartedAt = System.nanoTime()
         val lookup = scope.async {
             withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { firstSubstitute(higher, song, quality) }
         }
         val fallback = scope.async { youtube.resolve(song, quality).getOrNull() }
+        // At Lossless, a lossless source gets a head start: YouTube answering first no longer
+        // starts the track at once, the lookup is given until LOSSLESS_HEAD_START_MS from the
+        // start of the race. Starting on the FLAC avoids the swap a few seconds in, which flushes
+        // the output and, from 48 kHz Opus to 44.1 kHz FLAC, reopens the device: an audible stutter.
+        // A source with no copy answers sooner, and YouTube is taken then; one still searching past
+        // the head start goes on behind YouTube as before.
+        val headStartMs = if (
+            ceiling(quality) == DesktopAudioQuality.LOSSLESS && !song.isVideo &&
+            higher.any { it.config.kind.supportsLossless }
+        ) {
+            LOSSLESS_HEAD_START_MS
+        } else {
+            0L
+        }
 
         val quick: DesktopStream? = select {
             lookup.onAwait { it }
             // A YouTube leg that finished without a URL has not won anything.
-            fallback.onAwait { stream -> if (stream != null) null else lookup.await() }
+            fallback.onAwait { stream ->
+                when {
+                    stream == null -> lookup.await()
+                    headStartMs <= 0 -> null
+                    else -> {
+                        val left = headStartMs - (System.nanoTime() - raceStartedAt) / 1_000_000
+                        if (left <= 0) null else withTimeoutOrNull(left) { lookup.await() }
+                    }
+                }
+            }
         }
 
         if (quick != null) {
@@ -634,6 +658,9 @@ internal object DesktopSourceRegistry {
 
     /** How long the live path waits on the sources before starting on whatever YouTube has. */
     private const val SUBSTITUTE_TIMEOUT_MS = 20_000L
+
+    /** How long, at Lossless, a lossless source may keep YouTube waiting at the start of a track. */
+    private const val LOSSLESS_HEAD_START_MS = 6_000L
 
     /**
      * The patient second look's budget. Longer than the race's, because nobody is waiting on the

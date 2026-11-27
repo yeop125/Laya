@@ -151,7 +151,8 @@ internal object DesktopWireGuard {
             // No direct fallback. The message is the engine's own, which never carries keys.
             port = null
             failClosed()
-            val message = error.message?.take(200) ?: error.javaClass.simpleName
+            // The class too: some say nothing but a path (an AccessDeniedException, for one).
+            val message = "${error.javaClass.simpleName}: ${error.message.orEmpty()}".take(200)
             _status.value = Status(State.FAILED, message)
             DesktopTrackLog.log("WireGuard/E: could not start ($message); network blocked until it is fixed or turned off")
         }
@@ -170,6 +171,7 @@ internal object DesktopWireGuard {
                 "user" to JsonPrimitive(""),
                 "pass" to JsonPrimitive(""),
                 "openLocal" to JsonPrimitive(true),
+                "parentPid" to JsonPrimitive(ProcessHandle.current().pid()),
             ),
         ).toString() + "\n"
         child.outputStream.write(request.toByteArray(StandardCharsets.UTF_8))
@@ -192,22 +194,27 @@ internal object DesktopWireGuard {
 
     /** Copies the engine out of the jar, beside the analyser's natives, when it changed. */
     private fun unpackEngine(): File {
-        val name = if (DesktopPlatform.isWindows) "laya_wg.exe" else "laya_wg"
-        val resource = "/native/$name"
+        val windows = DesktopPlatform.isWindows
+        val resource = if (windows) "/native/laya_wg.exe" else "/native/laya_wg"
         val home = File(DesktopAnalysisRuntime.analysisHome().parentFile, "wireguard").apply { mkdirs() }
-        val target = File(home, name)
         val url = javaClass.getResource(resource)
             ?: throw IOException("This build does not include the WireGuard engine")
         val connection = url.openConnection()
-        val expected = connection.contentLengthLong
-        if (!(target.isFile && expected > 0 && target.length() == expected &&
-                target.lastModified() >= connection.lastModified)
-        ) {
+        // Named for this build's copy. Windows will not replace an executable that is running, and
+        // an engine left from an earlier launch (or an earlier install, still in the tray) made
+        // overwriting a fixed name fail with nothing but the path for a message. A new name never
+        // needs to replace anything.
+        val stamp = "${connection.contentLengthLong}-${connection.lastModified}"
+        val name = if (windows) "laya_wg-$stamp.exe" else "laya_wg-$stamp"
+        val target = File(home, name)
+        if (!(target.isFile && target.length() == connection.contentLengthLong)) {
             val partial = File(home, "$name.partial")
             connection.getInputStream().use { Files.copy(it, partial.toPath(), StandardCopyOption.REPLACE_EXISTING) }
             Files.move(partial.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
         target.setExecutable(true, true)
+        // Earlier builds' copies, when nothing is running them; one still in use stays until later.
+        home.listFiles()?.filter { it.name.startsWith("laya_wg") && it.name != name }?.forEach { runCatching { it.delete() } }
         return target
     }
 

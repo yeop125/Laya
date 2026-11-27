@@ -23,6 +23,9 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"runtime"
+	"syscall"
+	"time"
 )
 
 type sidecarRequest struct {
@@ -31,6 +34,28 @@ type sidecarRequest struct {
 	Pass    string `json:"pass"`
 	// OpenLocal: no login on the loopback listener (see EngineOptions).
 	OpenLocal bool `json:"openLocal"`
+	// ParentPid: the app's process. The engine also exits when it is gone, not only when stdin
+	// closes: a process the app started later (a browser it opened) can inherit the pipe's write
+	// end on Windows and keep stdin open after the app has exited.
+	ParentPid int `json:"parentPid"`
+}
+
+func watchParent(pid int) {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		os.Exit(0)
+	}
+	if runtime.GOOS == "windows" {
+		// On Windows FindProcess opens a handle that can be waited on for any process.
+		p.Wait()
+		os.Exit(0)
+	}
+	for {
+		time.Sleep(3 * time.Second)
+		if p.Signal(syscall.Signal(0)) != nil {
+			os.Exit(0)
+		}
+	}
 }
 
 func sidecarReply(v map[string]any) {
@@ -60,6 +85,9 @@ func main() {
 	if err != nil {
 		sidecarReply(map[string]any{"ok": false, "error": err.Error()})
 		os.Exit(1)
+	}
+	if req.ParentPid > 0 {
+		go watchParent(req.ParentPid)
 	}
 	sidecarReply(map[string]any{"ok": true, "port": e.Port()})
 	// Block until the parent goes away.

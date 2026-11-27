@@ -18,6 +18,9 @@ jobs:
     # built on Windows. The smtc DLL (WinRT media controls) also needs MSVC,
     # which only this runner has.
     runs-on: windows-latest
+    # contents: write only for the owner-only draft release below.
+    permissions:
+      contents: write
     env:
       LISTEN_TOGETHER_SERVER: ${{ secrets.LISTEN_TOGETHER_SERVER }}
       SIGNATURE_API_URL: ${{ secrets.SIGNATURE_API_URL }}
@@ -101,3 +104,18 @@ jobs:
         name: laya-windows-x64-exe
         path: dist/*.exe
         if-no-files-found: error
+
+    # A draft release is visible only to people who can push to this repository, so this is a
+    # private download: one .exe, a link that does not expire, and a browser can resume it,
+    # unlike the zipped artifact above. Delete the draft from the Releases page once downloaded.
+    - name: Owner-only draft release
+      if: github.event_name == 'workflow_dispatch'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        v="${{ steps.version.outputs.value }}"
+        gh release create "desktop-$v-run${{ github.run_number }}" dist/*.exe \
+          --repo "${{ github.repository }}" --draft --target "${{ github.sha }}" \
+          --title "Laya $v desktop (private draft, run ${{ github.run_number }})" \
+          --notes "Owner-only draft: not published, not visible to others. Delete it once downloaded."
